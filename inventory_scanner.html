@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Inventory Scanner</title>
+<script src="https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js"></script>
+<style>
+:root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#17202a;background:#f3f5f7}
+*{box-sizing:border-box}body{margin:0;padding:16px 14px 40px;max-width:650px;margin:auto}
+header{background:#174f35;color:white;border-radius:18px;padding:20px;margin-bottom:16px}
+h1{margin:0 0 5px;font-size:25px}header p{margin:0;opacity:.9}
+.card{background:white;border-radius:16px;padding:16px;margin:12px 0;box-shadow:0 2px 10px #0000000c}
+h2{font-size:18px;margin:0 0 12px}
+label{display:block;font-size:13px;font-weight:650;margin:10px 0 5px}
+input,textarea,button{font:inherit;width:100%;border-radius:10px;padding:12px;border:1px solid #ccd3d8;background:white}
+textarea{min-height:65px}button{border:0;background:#17613e;color:white;font-weight:700;margin-top:10px;cursor:pointer}
+button.secondary{background:#e7eee9;color:#174f35}button.danger{background:#a52a2a}
+.row{display:flex;gap:8px}.row>*{flex:1;min-width:0}
+#video{width:100%;border-radius:12px;background:#111;max-height:300px;object-fit:cover}
+.item{border:1px solid #e0e5e8;border-radius:12px;padding:12px;margin:10px 0}
+.item strong{display:block;font-size:16px;overflow-wrap:anywhere}.muted{color:#66717a;font-size:13px;margin-top:4px}
+.pill{display:inline-block;background:#edf4ef;color:#175334;border-radius:30px;padding:4px 9px;font-size:12px;margin-top:6px}
+#status{font-size:13px;color:#47545c;margin-top:8px}
+.small{font-size:12px;color:#657078;line-height:1.4}
+</style></head>
+<body>
+<header><h1>Inventory Scanner</h1><p>Scan barcodes • Save SKUs • Export your list</p></header>
+<section class="card">
+<h2>Scan a barcode</h2>
+<video id="video" playsinline></video>
+<div class="row"><button id="start">Start camera scanner</button><button class="secondary" id="stop">Stop</button></div>
+<div id="status">Camera scanning requires HTTPS and permission. You can also type or paste a barcode below.</div>
+</section>
+<section class="card">
+<h2>Add / edit inventory item</h2>
+<label>Barcode</label><input id="barcode" placeholder="Scan or enter barcode" inputmode="numeric">
+<label>SKU number</label><input id="sku" placeholder="Enter SKU">
+<label>Product name</label><input id="name" placeholder="Enter product name">
+<div class="row"><div><label>Quantity</label><input id="qty" type="number" min="0" value="1"></div><div><label>Aisle / Bay</label><input id="location" placeholder="e.g. Aisle 4, Bay 2"></div></div>
+<label>Notes</label><textarea id="notes" placeholder="Optional notes"></textarea>
+<button id="save">Save item to list</button>
+<button class="secondary" id="clear">Clear fields</button>
+</section>
+<section class="card">
+<h2>Saved inventory <span id="count" class="pill">0 items</span></h2>
+<input id="search" placeholder="Search barcode, SKU, name, location…">
+<div class="row"><button id="export">Export CSV</button><button class="secondary" id="backup">Download backup</button></div>
+<div class="row"><button class="secondary" id="importBtn">Import backup</button><button class="danger" id="deleteAll">Delete all</button></div>
+<input id="file" type="file" accept=".json,application/json" hidden>
+<div id="list"></div>
+<p class="small">Items are saved in this browser on this device. Export CSV regularly and keep a backup before clearing browser data or switching devices.</p>
+</section>
+<script>
+const $=id=>document.getElementById(id);
+let items=JSON.parse(localStorage.getItem('inventoryScannerItems')||'[]'), editingId=null, reader=null;
+function persist(){localStorage.setItem('inventoryScannerItems',JSON.stringify(items));render()}
+function val(id){return $(id).value.trim()}
+function clearForm(){['barcode','sku','name','location','notes'].forEach(id=>$(id).value='');$('qty').value=1;editingId=null;$('save').textContent='Save item to list'}
+function render(){
+ const q=val('search').toLowerCase();
+ const filtered=items.filter(x=>[x.barcode,x.sku,x.name,x.location,x.notes].join(' ').toLowerCase().includes(q));
+ $('count').textContent=items.length+' item'+(items.length===1?'':'s');
+ $('list').innerHTML=filtered.length?filtered.map(x=>`<div class="item"><strong>${esc(x.name||'Unnamed item')}</strong><div class="muted">Barcode: ${esc(x.barcode||'—')}<br>SKU: ${esc(x.sku||'—')}<br>Qty: ${esc(String(x.qty??''))} · Location: ${esc(x.location||'—')}</div>${x.notes?`<div class="muted">Notes: ${esc(x.notes)}</div>`:''}<div class="row"><button class="secondary" onclick="editItem('${x.id}')">Edit</button><button class="danger" onclick="removeItem('${x.id}')">Delete</button></div></div>`).join(''):'<p class="muted">No matching saved items yet.</p>';
+}
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+$('save').onclick=()=>{
+ const record={id:editingId||Date.now().toString(),barcode:val('barcode'),sku:val('sku'),name:val('name'),qty:val('qty')||'1',location:val('location'),notes:val('notes'),updated:new Date().toISOString()};
+ if(!record.barcode&&!record.sku&&!record.name){alert('Enter or scan a barcode, SKU, or product name.');return}
+ if(editingId){items=items.map(x=>x.id===editingId?record:x)}else{items.unshift(record)}
+ persist();clearForm();
+};
+window.editItem=id=>{const x=items.find(y=>y.id===id);if(!x)return;editingId=id;['barcode','sku','name','qty','location','notes'].forEach(k=>$(k).value=x[k]??'');$('save').textContent='Update item';window.scrollTo({top:0,behavior:'smooth'})};
+window.removeItem=id=>{if(confirm('Delete this item?')){items=items.filter(x=>x.id!==id);persist()}};
+$('clear').onclick=clearForm;$('search').oninput=render;
+function download(filename,content,type){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([content],{type}));a.download=filename;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1500)}
+$('export').onclick=()=>{const cols=['barcode','sku','name','qty','location','notes','updated'];const quote=v=>'"'+String(v??'').replace(/"/g,'""')+'"';const csv=[cols.join(','),...items.map(x=>cols.map(k=>quote(x[k])).join(','))].join('\r\n');download('inventory-'+new Date().toISOString().slice(0,10)+'.csv','\ufeff'+csv,'text/csv;charset=utf-8;')};
+$('backup').onclick=()=>download('inventory-backup.json',JSON.stringify(items,null,2),'application/json');
+$('importBtn').onclick=()=>$('file').click();
+$('file').onchange=async e=>{const f=e.target.files[0];if(!f)return;try{const data=JSON.parse(await f.text());if(!Array.isArray(data))throw 0;items=data;persist();alert('Backup imported.')}catch{alert('Could not import that backup file.')}e.target.value=''};
+$('deleteAll').onclick=()=>{if(confirm('Permanently delete all saved items from this browser? Export a backup first if needed.')){items=[];persist();clearForm()}};
+$('start').onclick=async()=>{
+ if(!window.ZXing){$('status').textContent='Scanner library did not load. Check internet connection or enter barcode manually.';return}
+ try{reader=new ZXing.BrowserMultiFormatReader();$('status').textContent='Requesting camera…';await reader.decodeFromVideoDevice(undefined,'video',(result,err)=>{if(result){$('barcode').value=result.getText();$('status').textContent='Barcode captured. Add SKU/details and tap Save.';reader.reset();reader=null}});$('status').textContent='Point your camera at a barcode.'}
+ catch(e){$('status').textContent='Camera unavailable. Allow camera access and open this page using HTTPS. You can enter barcode manually.'}
+};
+$('stop').onclick=()=>{if(reader){reader.reset();reader=null}$('video').srcObject?.getTracks().forEach(t=>t.stop());$('status').textContent='Scanner stopped.'};
+render();
+</script></body></html>
